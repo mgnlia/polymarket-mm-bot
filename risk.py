@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from config import Config
 
@@ -182,7 +182,7 @@ class RiskManager:
         if not self.state.trading_halted:
             self.state.trading_halted = True
             self.state.halt_reason = reason
-            print(f"[risk] ⚠️  TRADING HALTED — {reason}")
+            print(f"[risk] TRADING HALTED — {reason}")
 
     def resume_trading(self) -> None:
         """Manually resume after halt (requires human confirmation)."""
