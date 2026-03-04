@@ -39,16 +39,16 @@ The Gamma API returns these fields as **JSON-encoded strings**, not arrays:
 
 ## Architecture
 ```
-bot.py            ← Main orchestration loop (Triple Revenue)
-scanner.py        ← Fetch & score rewarded markets (Gamma API)
-quoter.py         ← Build & place two-sided limit orders (with builder attribution)
-risk.py           ← Position tracking, exposure limits, circuit breakers
-hedger.py         ← Delta-neutral rebalancing
-rewards.py        ← Track daily USDC payouts (MM program)
-builder_auth.py   ← Builder Program auth: X-Builder-Id / X-Builder-Signature headers
-builder_rewards.py← Builder Program volume & weekly reward tracking
-config.py         ← All parameters (env-configurable)
-api.py            ← FastAPI server: dashboard + /api/builder endpoint
+bot.py              ← Main orchestration loop (Triple Revenue)
+scanner.py          ← Fetch & score rewarded markets (Gamma API)
+quoter.py           ← Build & place two-sided limit orders (with builder attribution)
+risk.py             ← Position tracking, exposure limits, circuit breakers
+hedger.py           ← Delta-neutral rebalancing
+rewards.py          ← Track daily USDC payouts (MM program)
+builder_auth.py     ← Builder Program auth via py-builder-signing-sdk (official)
+builder_rewards.py  ← Builder Program volume & weekly reward tracking
+config.py           ← All parameters (env-configurable)
+api.py              ← FastAPI server: dashboard + /api/builder endpoint
 ```
 
 ## Setup
@@ -88,15 +88,21 @@ cp .env.example .env
 | `FUNDER_ADDRESS` | Wallet address |
 | `BOT_CONTROL_TOKEN` | Secret token for stop/resume API |
 
-### Builder Program (NEW — enables weekly USDC rewards)
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `POLYMARKET_BUILDER_ID` | Recommended | Your builder wallet address/ID (sets `X-Builder-Id` header) |
-| `POLYMARKET_BUILDER_SIGNATURE` | Recommended | Static signature from builder portal (sets `X-Builder-Signature` header) |
-| `POLY_BUILDER_API_KEY` | Advanced | Builder API key (for full HMAC signing) |
-| `POLY_BUILDER_SECRET` | Advanced | HMAC signing secret (base64-encoded) |
-| `POLY_BUILDER_PASSPHRASE` | Advanced | API passphrase |
-| `POLY_RELAYER_HOST` | No | Relayer URL for gasless txns (default: `https://relayer.polymarket.com`) |
+### Builder Program (enables weekly USDC rewards)
+Uses the official [`py-builder-signing-sdk`](https://github.com/Polymarket/py-builder-signing-sdk).
+All three vars are required — there is no "simple static signature" mode.
+
+| Variable | Description |
+|----------|-------------|
+| `POLY_BUILDER_API_KEY` | Builder API key from the builder portal |
+| `POLY_BUILDER_SECRET` | Base64url-encoded HMAC secret from the builder portal |
+| `POLY_BUILDER_PASSPHRASE` | API passphrase |
+
+These generate the four official headers on every CLOB order request:
+- `POLY_BUILDER_API_KEY`
+- `POLY_BUILDER_TIMESTAMP`
+- `POLY_BUILDER_PASSPHRASE`
+- `POLY_BUILDER_SIGNATURE` (HMAC-SHA256, URL-safe base64)
 
 ### Optional
 | Variable | Default | Description |
@@ -111,25 +117,39 @@ cp .env.example .env
 
 ## Builder Program Setup
 
-The [Polymarket Builder Program](https://docs.polymarket.com/builders/overview) rewards developers who route volume through their builder profile with weekly USDC payouts.
+The [Polymarket Builder Program](https://docs.polymarket.com/builders/overview) rewards developers
+who route volume through their builder profile with weekly USDC payouts.
 
 ### How to Register
 1. Go to https://polymarket.com/settings?tab=builder
 2. Register your wallet as a builder
-3. Copy your **Builder ID** (wallet address) and **Builder Signature**
+3. Retrieve your **API key**, **secret** (base64url-encoded), and **passphrase**
 4. Add to your `.env`:
    ```bash
-   POLYMARKET_BUILDER_ID=0xYourWalletAddress
-   POLYMARKET_BUILDER_SIGNATURE=your_signature_from_portal
+   POLY_BUILDER_API_KEY=your_api_key
+   POLY_BUILDER_SECRET=your_base64url_secret
+   POLY_BUILDER_PASSPHRASE=your_passphrase
    ```
 
 ### How It Works
-Every order placed by this bot includes two HTTP headers on CLOB API requests:
+Every order placed by this bot uses `py-builder-signing-sdk` to generate four HTTP headers
+on CLOB API requests:
 ```
-X-Builder-Id: <your_builder_id>
-X-Builder-Signature: <your_signature>
+POLY_BUILDER_API_KEY: <your_api_key>
+POLY_BUILDER_TIMESTAMP: <unix_timestamp>
+POLY_BUILDER_PASSPHRASE: <your_passphrase>
+POLY_BUILDER_SIGNATURE: <hmac_sha256_urlsafe_b64>
 ```
-These headers attribute the order volume to your builder profile. Polymarket distributes weekly USDC rewards proportional to attributed volume.
+
+The signature is computed as:
+```
+message  = timestamp + method + path + body.replace("'", '"')
+key      = base64.urlsafe_b64decode(secret)
+signature = base64.urlsafe_b64encode(hmac.new(key, message, sha256))
+```
+
+These headers attribute the order volume to your builder profile.
+Polymarket distributes weekly USDC rewards proportional to attributed volume.
 
 ### Builder Stats Endpoint
 ```bash
@@ -138,21 +158,14 @@ GET /api/builder
 Returns:
 ```json
 {
+  "builder_enabled": true,
   "builder_key": "0xABC...",
-  "tier": "Verified",
-  "leaderboard_rank": 42,
-  "total_volume_usdc": 125000.00,
   "total_orders_attributed": 3840,
-  "total_rewards_usdc": 487.50,
-  "current_week": {
-    "volume_usdc": 18500.00,
-    "orders": 560
-  },
-  "revenue_streams": {
-    "spread_capture": "active",
-    "liquidity_rewards": "active",
-    "builder_rewards": "active"
-  }
+  "total_volume_usdc": 125000.00,
+  "volume_by_market": {"0xmarket1": 45000.0},
+  "leaderboard_rank": 42,
+  "tier": "Verified",
+  "weekly_rewards_usdc": 487.50
 }
 ```
 
@@ -161,11 +174,6 @@ Returns:
 GET /api/builder/orders?limit=50
 ```
 Returns recent orders attributed to your builder profile.
-
-### Relayer Client (Gasless Transactions)
-When builder credentials are configured, the bot initializes a Relayer Client for gasless onchain operations (wallet deployment, USDC approvals, CTF operations). This eliminates the need to hold MATIC for gas.
-
-Reference: https://docs.polymarket.com/builders/overview
 
 ## Run
 ```bash
@@ -212,7 +220,9 @@ docker run --env-file .env -p 8000:8000 mm-bot
 curl -X POST http://localhost:8000/api/bot/stop \
   -H "Authorization: Bearer your-secret-token"
 ```
-Set `BOT_CONTROL_TOKEN` in your environment. If not set, a random token is generated at startup (printed to logs). CORS is restricted to `CORS_ALLOWED_ORIGINS` (default: `http://localhost:3000`). Never use `*` in production.
+Set `BOT_CONTROL_TOKEN` in your environment. If not set, a random token is generated at startup
+(printed to logs). CORS is restricted to `CORS_ALLOWED_ORIGINS` (default: `http://localhost:3000`).
+Never use `*` in production.
 
 ## Risk Engine
 ### Drawdown Calculation
@@ -236,4 +246,5 @@ The upcoming $POLY token airdrop is expected to reward:
 - ✅ Builder Program participation (weekly USDC + airdrop eligibility)
 
 ## Disclaimer
-This bot trades real money. Start with small capital ($50–100) to validate performance before scaling. Market making carries inventory risk — prices can move against your positions.
+This bot trades real money. Start with small capital ($50–100) to validate performance before scaling.
+Market making carries inventory risk — prices can move against your positions.

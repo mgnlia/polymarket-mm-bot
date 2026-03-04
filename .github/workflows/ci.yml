@@ -19,7 +19,7 @@ jobs:
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      - name: Install dependencies (no py-clob-client in CI)
+      - name: Install dependencies
         run: |
           uv pip install --system \
             "httpx>=0.27" \
@@ -27,6 +27,7 @@ jobs:
             "uvicorn" \
             "python-dotenv>=1.0" \
             "websockets>=12.0" \
+            "py-builder-signing-sdk>=0.1.0" \
             "pytest>=8.0" \
             "pytest-asyncio>=0.23"
 
