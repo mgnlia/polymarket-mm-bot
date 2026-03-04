@@ -16,9 +16,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import importlib
 import os
+import sys
 import time
-from typing import Dict
 from unittest.mock import patch
 
 import pytest
@@ -26,7 +27,7 @@ import pytest
 # ── Helpers that mirror the SDK's exact signing logic ────────────────────────
 
 def _sdk_sign(secret_b64url: str, timestamp: str, method: str, path: str, body=None) -> str:
-    """Reproduce the SDK's build_hmac_signature for test assertions."""
+    """Reproduce py_builder_signing_sdk/signing/hmac.py:build_hmac_signature."""
     key_bytes = base64.urlsafe_b64decode(secret_b64url)
     message = timestamp + method + path
     if body:
@@ -40,10 +41,8 @@ def _make_urlsafe_b64_secret(raw: bytes = b"test-secret-value") -> str:
     return base64.urlsafe_b64encode(raw).decode("utf-8")
 
 
-# ── Import the module under test ──────────────────────────────────────────────
+# ── SDK availability ──────────────────────────────────────────────────────────
 
-# Patch the SDK import so tests don't need the package installed in CI
-# (if it IS installed, the real SDK is used — both paths are tested)
 try:
     from py_builder_signing_sdk import BuilderConfig, BuilderApiKeyCreds
     SDK_AVAILABLE = True
@@ -57,7 +56,7 @@ except ImportError:
 class TestSDKHeaderNames:
     """Validate that the SDK produces the four correct header names."""
 
-    def _make_config(self) -> BuilderConfig:
+    def _make_config(self) -> "BuilderConfig":
         secret = _make_urlsafe_b64_secret()
         creds = BuilderApiKeyCreds(key="test-key", secret=secret, passphrase="test-pass")
         return BuilderConfig(local_builder_creds=creds)
@@ -73,13 +72,13 @@ class TestSDKHeaderNames:
         assert "POLY_BUILDER_SIGNATURE" in headers, "Missing POLY_BUILDER_SIGNATURE"
 
     def test_wrong_header_names_not_present(self):
-        """Ensure the old broken headers are NOT generated."""
+        """Old broken headers must NOT be generated."""
         config = self._make_config()
         payload = config.generate_builder_headers("POST", "/order")
         headers = payload.to_dict()
 
-        assert "X-Builder-Id" not in headers, "Old header X-Builder-Id must not be present"
-        assert "X-Builder-Signature" not in headers, "Old header X-Builder-Signature must not be present"
+        assert "X-Builder-Id" not in headers
+        assert "X-Builder-Signature" not in headers
         assert "POLY_ADDRESS" not in headers
         assert "POLY_SIGNATURE" not in headers
 
@@ -111,8 +110,7 @@ class TestSDKHeaderNames:
         config = self._make_config()
         payload = config.generate_builder_headers("POST", "/order", '{"x":1}')
         sig = payload.POLY_BUILDER_SIGNATURE
-        # URL-safe b64 should decode without error
-        decoded = base64.urlsafe_b64decode(sig + "==")  # pad for safety
+        decoded = base64.urlsafe_b64decode(sig + "==")
         assert len(decoded) == 32, "SHA-256 HMAC must be 32 bytes"
 
     def test_signature_changes_with_different_body(self):
@@ -135,49 +133,38 @@ class TestSDKHeaderNames:
 class TestHmacSigningMath:
     """Validate the signing algorithm independently of the SDK."""
 
-    def test_urlsafe_b64_decode_used(self):
-        """
-        If standard b64decode were used on a URL-safe secret, the key bytes
-        would differ (- vs +, _ vs /). Verify our helper uses urlsafe decode.
-        """
-        raw = b"\xfb\xff\xfe"  # bytes that differ between standard and urlsafe b64
+    def test_urlsafe_b64_decode_correctness(self):
+        """urlsafe_b64decode must produce correct key bytes from a URL-safe secret."""
+        raw = b"\xfb\xff\xfe"
         urlsafe_secret = base64.urlsafe_b64encode(raw).decode()
-        standard_secret = base64.b64encode(raw).decode()
+        key_bytes = base64.urlsafe_b64decode(urlsafe_secret)
+        assert key_bytes == raw
 
-        # urlsafe and standard encodings may differ for these bytes
-        key_urlsafe = base64.urlsafe_b64decode(urlsafe_secret)
-        key_standard = base64.b64decode(standard_secret)
-        assert key_urlsafe == raw
-        assert key_standard == raw  # same raw bytes, different encoded form
-
-        # Signing with the urlsafe-encoded secret using urlsafe decode is correct
         sig = _sdk_sign(urlsafe_secret, "1700000000", "POST", "/order")
         assert len(base64.urlsafe_b64decode(sig + "==")) == 32
 
     def test_single_quote_replacement_in_body(self):
-        """Body with single quotes must be normalised before signing."""
+        """Body with single quotes must produce the same sig as double-quoted body."""
         secret = _make_urlsafe_b64_secret()
         ts = "1700000000"
 
-        # Body with single quotes (Python dict repr style)
-        body_with_single = "{'size': 10, 'side': 'BUY'}"
-        body_with_double = '{"size": 10, "side": "BUY"}'
+        body_single = "{'size': 10, 'side': 'BUY'}"
+        body_double = '{"size": 10, "side": "BUY"}'
 
-        sig_single = _sdk_sign(secret, ts, "POST", "/order", body_with_single)
-        sig_double = _sdk_sign(secret, ts, "POST", "/order", body_with_double)
+        sig_single = _sdk_sign(secret, ts, "POST", "/order", body_single)
+        sig_double = _sdk_sign(secret, ts, "POST", "/order", body_double)
 
-        # Both must produce the same signature (single quotes normalised)
         assert sig_single == sig_double, (
             "Signature for body with single quotes must equal signature for "
             "same body with double quotes after normalisation."
         )
 
-    def test_no_body_vs_none_body(self):
-        """None body and empty body should behave consistently."""
+    def test_none_body_excludes_body_from_message(self):
+        """None body: message is just timestamp+method+path, no body appended."""
         secret = _make_urlsafe_b64_secret()
         ts = "1700000000"
         sig_none = _sdk_sign(secret, ts, "GET", "/markets", None)
-        # None body: message is just ts+method+path, no body appended
+
         key_bytes = base64.urlsafe_b64decode(secret)
         message = ts + "GET" + "/markets"
         expected = base64.urlsafe_b64encode(
@@ -188,39 +175,39 @@ class TestHmacSigningMath:
     def test_different_methods_produce_different_sigs(self):
         secret = _make_urlsafe_b64_secret()
         ts = "1700000000"
-        sig_post = _sdk_sign(secret, ts, "POST", "/order")
-        sig_get = _sdk_sign(secret, ts, "GET", "/order")
-        assert sig_post != sig_get
+        assert _sdk_sign(secret, ts, "POST", "/order") != _sdk_sign(secret, ts, "GET", "/order")
 
     def test_different_paths_produce_different_sigs(self):
         secret = _make_urlsafe_b64_secret()
         ts = "1700000000"
-        sig1 = _sdk_sign(secret, ts, "POST", "/order")
-        sig2 = _sdk_sign(secret, ts, "POST", "/cancel")
-        assert sig1 != sig2
+        assert _sdk_sign(secret, ts, "POST", "/order") != _sdk_sign(secret, ts, "POST", "/cancel")
 
     def test_signature_output_is_urlsafe_base64(self):
         secret = _make_urlsafe_b64_secret()
         sig = _sdk_sign(secret, "1700000000", "POST", "/order", '{"x":1}')
-        # Must not contain standard b64 chars + or /
         assert "+" not in sig, "Signature must use URL-safe base64 (no +)"
         assert "/" not in sig, "Signature must use URL-safe base64 (no /)"
 
 
-# ── Tests for builder_auth module ─────────────────────────────────────────────
+# ── Tests for builder_auth module functions ───────────────────────────────────
+
+def _reload_builder_auth():
+    """Force a fresh import of builder_auth so env patches take effect."""
+    if "builder_auth" in sys.modules:
+        del sys.modules["builder_auth"]
+    import builder_auth
+    return builder_auth
+
 
 @pytest.mark.skipif(not SDK_AVAILABLE, reason="py-builder-signing-sdk not installed")
 class TestBuilderAuthModule:
-    """Tests for the bot's builder_auth.py wrapper."""
+    """Tests for builder_auth.py wrapper functions."""
 
     def test_no_headers_when_env_missing(self):
         with patch.dict(os.environ, {}, clear=True):
-            # Reset module singleton
-            import builder_auth
-            builder_auth._builder_config = None
-            from builder_auth import generate_builder_headers, load_builder_config
-            config = load_builder_config()
-            headers = generate_builder_headers(config, "POST", "/order")
+            ba = _reload_builder_auth()
+            config = ba.load_builder_config()
+            headers = ba.generate_builder_headers(config, "POST", "/order")
         assert headers == {}
 
     def test_correct_headers_when_env_set(self):
@@ -231,27 +218,37 @@ class TestBuilderAuthModule:
             "POLY_BUILDER_PASSPHRASE": "mypass",
         }
         with patch.dict(os.environ, env, clear=True):
-            import builder_auth
-            builder_auth._builder_config = None
-            from builder_auth import generate_builder_headers, load_builder_config
-            config = load_builder_config()
-            headers = generate_builder_headers(config, "POST", "/order", '{"size":5}')
+            ba = _reload_builder_auth()
+            config = ba.load_builder_config()
+            headers = ba.generate_builder_headers(config, "POST", "/order", '{"size":5}')
 
         assert "POLY_BUILDER_API_KEY" in headers
         assert "POLY_BUILDER_TIMESTAMP" in headers
         assert "POLY_BUILDER_PASSPHRASE" in headers
         assert "POLY_BUILDER_SIGNATURE" in headers
-
         # Old broken headers must be absent
         assert "X-Builder-Id" not in headers
         assert "X-Builder-Signature" not in headers
 
+    def test_api_key_and_passphrase_values_correct(self):
+        secret = _make_urlsafe_b64_secret()
+        env = {
+            "POLY_BUILDER_API_KEY": "mykey",
+            "POLY_BUILDER_SECRET": secret,
+            "POLY_BUILDER_PASSPHRASE": "mypass",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            ba = _reload_builder_auth()
+            config = ba.load_builder_config()
+            headers = ba.generate_builder_headers(config, "POST", "/order")
+
+        assert headers["POLY_BUILDER_API_KEY"] == "mykey"
+        assert headers["POLY_BUILDER_PASSPHRASE"] == "mypass"
+
     def test_is_builder_enabled_false_without_env(self):
         with patch.dict(os.environ, {}, clear=True):
-            import builder_auth
-            builder_auth._builder_config = None
-            from builder_auth import is_builder_enabled
-            assert not is_builder_enabled()
+            ba = _reload_builder_auth()
+            assert not ba.is_builder_enabled()
 
     def test_is_builder_enabled_true_with_env(self):
         secret = _make_urlsafe_b64_secret()
@@ -261,7 +258,24 @@ class TestBuilderAuthModule:
             "POLY_BUILDER_PASSPHRASE": "p",
         }
         with patch.dict(os.environ, env, clear=True):
-            import builder_auth
-            builder_auth._builder_config = None
-            from builder_auth import is_builder_enabled
-            assert is_builder_enabled()
+            ba = _reload_builder_auth()
+            assert ba.is_builder_enabled()
+
+    def test_signature_math_matches_sdk(self):
+        """Signature produced by generate_builder_headers must match _sdk_sign."""
+        secret = _make_urlsafe_b64_secret()
+        env = {
+            "POLY_BUILDER_API_KEY": "k",
+            "POLY_BUILDER_SECRET": secret,
+            "POLY_BUILDER_PASSPHRASE": "p",
+        }
+        ts = 1700000000
+        with patch.dict(os.environ, env, clear=True):
+            ba = _reload_builder_auth()
+            config = ba.load_builder_config()
+            headers = ba.generate_builder_headers(
+                config, "POST", "/order", '{"size":5}', timestamp=ts
+            )
+
+        expected_sig = _sdk_sign(secret, str(ts), "POST", "/order", '{"size":5}')
+        assert headers["POLY_BUILDER_SIGNATURE"] == expected_sig
