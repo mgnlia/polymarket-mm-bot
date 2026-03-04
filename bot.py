@@ -74,6 +74,23 @@ class MarketMakerBot:
             "builder_enabled": self._builder_creds.configured,
         }
 
+    # ── Public properties (use these in api.py — not _private attrs) ──────────
+
+    @property
+    def builder_creds(self) -> BuilderCreds:
+        """Builder API credentials. Prefer this over _builder_creds."""
+        return self._builder_creds
+
+    @property
+    def builder_rewards(self) -> BuilderRewardsTracker:
+        """Builder rewards tracker. Prefer this over _builder_rewards."""
+        return self._builder_rewards
+
+    @property
+    def active_markets(self) -> List[ScoredMarket]:
+        """Currently tracked markets. Prefer this over _active_markets."""
+        return self._active_markets
+
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     async def start(self) -> None:
