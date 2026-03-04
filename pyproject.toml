@@ -1,7 +1,7 @@
 [project]
 name = "polymarket-mm-bot"
-version = "0.1.0"
-description = "Polymarket Market Maker Bot — earns liquidity rewards + farms $POLY airdrop"
+version = "2.0.0"
+description = "Polymarket Market Maker Bot — triple revenue: spread + liquidity rewards + builder rewards"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
