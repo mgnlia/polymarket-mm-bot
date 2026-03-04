@@ -7,7 +7,6 @@ from typing import Any, Dict
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from bot import MarketMakerBot
 from config import Config
