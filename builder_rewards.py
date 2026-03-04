@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -245,11 +245,19 @@ class BuilderRewardsTracker:
 
     @staticmethod
     def _current_week_start() -> float:
-        """Unix timestamp of the most recent Monday 00:00 UTC."""
+        """
+        Unix timestamp of the most recent Monday 00:00 UTC.
+
+        Uses timedelta subtraction — safe for any day-of-month value.
+        The old replace(day=now.day - weekday) threw ValueError when
+        day-of-month minus weekday went to 0 or negative (e.g. March 1
+        on a Wednesday → day = 1 - 2 = -1).
+        """
         now = datetime.now(timezone.utc)
-        days_since_monday = now.weekday()
-        monday = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        monday = monday.replace(day=now.day - days_since_monday)
+        days_since_monday = now.weekday()  # Monday=0, Sunday=6
+        monday = (now - timedelta(days=days_since_monday)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         return monday.timestamp()
 
     async def close(self) -> None:
