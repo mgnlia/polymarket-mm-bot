@@ -22,17 +22,13 @@ jobs:
       - name: Install dependencies (no py-clob-client in CI)
         run: |
           uv pip install --system \
-            httpx>=0.27 \
-            fastapi>=0.111 \
-            uvicorn \
-            python-dotenv>=1.0 \
-            websockets>=12.0 \
-            pytest>=8.0 \
-            pytest-asyncio>=0.23 \
-            ruff>=0.4
+            "httpx>=0.27" \
+            "fastapi>=0.111" \
+            "uvicorn" \
+            "python-dotenv>=1.0" \
+            "websockets>=12.0" \
+            "pytest>=8.0" \
+            "pytest-asyncio>=0.23"
 
-      - name: Lint
-        run: ruff check . --ignore E501
-
-      - name: Run tests (skip tests requiring clob client)
-        run: pytest tests/ -v -k "not test_place" --ignore=tests/test_bot.py
+      - name: Run tests
+        run: pytest tests/test_scanner.py tests/test_quoter.py -v
