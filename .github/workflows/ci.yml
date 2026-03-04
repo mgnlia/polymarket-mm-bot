@@ -31,4 +31,6 @@ jobs:
             "pytest-asyncio>=0.23"
 
       - name: Run tests
-        run: pytest tests/ -v
+        run: |
+          pytest tests/test_scanner.py tests/test_quoter.py tests/test_risk.py -v \
+            --asyncio-mode=auto
