@@ -7,23 +7,23 @@ on:
     branches: [main]
 
 jobs:
-  lint:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install uv
         run: pip install uv
+
       - name: Install dependencies
-        run: uv sync --dev || uv pip install ruff || true
+        run: uv pip install --system -e ".[dev]"
+
       - name: Lint
-        run: |
-          pip install ruff || true
-          ruff check . --ignore E501 || true
-      - name: Check structure
-        run: |
-          echo "Checking required modules exist..."
-          test -f scanner.py || test -f src/scanner.py || find . -name "scanner.py" | head -1
-          echo "CI checks passed"
+        run: ruff check .
+
+      - name: Run tests
+        run: pytest tests/ -v
