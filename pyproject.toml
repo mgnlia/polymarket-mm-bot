@@ -1,6 +1,6 @@
 [project]
 name = "polymarket-mm-bot"
-version = "2.1.0"
+version = "2.2.0"
 description = "Polymarket Market Maker Bot — triple revenue: spread + liquidity rewards + builder rewards"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -11,7 +11,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "py-clob-client>=0.18",
     "websockets>=12.0",
-    "py-builder-signing-sdk>=0.1.0",
+    "py-builder-signing-sdk>=0.0.2",
 ]
 
 [project.optional-dependencies]
