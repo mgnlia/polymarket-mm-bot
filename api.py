@@ -118,7 +118,8 @@ app.add_middleware(
 async def health() -> Dict[str, Any]:
     return {
         "status": "ok",
-        "builder_enabled": _bot._builder_creds.configured if _bot else False,
+        # Use public property — not _bot._builder_creds
+        "builder_enabled": _bot.builder_creds.configured if _bot else False,
     }
 
 
@@ -132,7 +133,8 @@ async def get_status() -> Dict[str, Any]:
         "quote_cycles": _bot.stats.get("quote_cycles", 0),
         "markets_quoted": _bot.stats.get("markets_quoted", 0),
         "dry_run": _bot.quoter._client is None,
-        "builder_enabled": _bot._builder_creds.configured,
+        # Use public property — not _bot._builder_creds
+        "builder_enabled": _bot.builder_creds.configured,
         "errors": _bot.stats.get("errors", []),
     }
 
@@ -170,11 +172,13 @@ async def get_builder_stats() -> Dict[str, Any]:
     if not _bot:
         return {"error": "bot not started"}
 
-    summary = _bot._builder_rewards.summary()
+    # Use public property — not _bot._builder_rewards
+    summary = _bot.builder_rewards.summary()
     summary["revenue_streams"] = {
         "spread_capture": "active",
         "liquidity_rewards": "active",
-        "builder_rewards": "active" if _bot._builder_creds.configured else "disabled",
+        # Use public property — not _bot._builder_creds
+        "builder_rewards": "active" if _bot.builder_creds.configured else "disabled",
     }
     return summary
 
@@ -188,9 +192,11 @@ async def get_builder_orders(limit: int = 50) -> Dict[str, Any]:
     if not _bot:
         return {"orders": [], "total": 0}
 
-    orders = _bot._builder_rewards._orders[-limit:]
+    # Use public property — not _bot._builder_rewards
+    br = _bot.builder_rewards
+    orders = br._orders[-limit:]
     return {
-        "total": len(_bot._builder_rewards._orders),
+        "total": len(br._orders),
         "returned": len(orders),
         "orders": [
             {
@@ -211,6 +217,7 @@ async def get_builder_orders(limit: int = 50) -> Dict[str, Any]:
 async def get_markets() -> Dict[str, Any]:
     if not _bot:
         return {"markets": []}
+    # Use public property — not _bot._active_markets
     markets = [
         {
             "condition_id": m.condition_id,
@@ -224,7 +231,7 @@ async def get_markets() -> Dict[str, Any]:
             "is_extreme": m.is_extreme,
             "reward_score": round(m.reward_score, 4),
         }
-        for m in _bot._active_markets
+        for m in _bot.active_markets
     ]
     return {"markets": markets, "count": len(markets)}
 
