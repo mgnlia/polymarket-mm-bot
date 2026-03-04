@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import signal
+import sys
+import time
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from config import Config
 from hedger import Hedger, HedgeAction
@@ -54,7 +56,7 @@ class MarketMakerBot:
 
     async def start(self) -> None:
         """Start the bot. Blocks until stopped."""
-        print("[bot] Starting Polymarket Market Maker Bot")
+        print(f"[bot] Starting Polymarket Market Maker Bot")
         print(f"[bot] Max markets: {self.config.max_markets}")
         print(f"[bot] Target spread: {self.config.target_spread_pct:.1%}")
         print(f"[bot] Max exposure: ${self.config.max_total_exposure_usdc:.0f} USDC")
@@ -192,9 +194,7 @@ class MarketMakerBot:
     async def _stats_loop(self) -> None:
         """Update uptime stats every 10s."""
         while self._running:
-            self.stats["uptime_s"] = int(
-                (datetime.now(timezone.utc) - self._start_time).total_seconds()
-            )
+            self.stats["uptime_s"] = int((datetime.now(timezone.utc) - self._start_time).total_seconds())
             self.stats["risk"] = self.risk.summary()
             self.stats["rewards"] = {
                 "today": self.rewards.summary.today_earned_usdc,
@@ -217,7 +217,7 @@ async def main() -> None:
     # Validate config (will raise if PRIVATE_KEY missing)
     try:
         config.validate()
-        print("[bot] Config validated")
+        print("[bot] Config validated ✓")
         clob_client = _init_clob_client(config)
     except ValueError as e:
         print(f"[bot] Config warning: {e}")
@@ -242,7 +242,7 @@ def _init_clob_client(config: Config):
         # Derive API credentials
         creds = client.create_or_derive_api_creds()
         client.set_api_creds(creds)
-        print("[bot] CLOB client initialized")
+        print("[bot] CLOB client initialized ✓")
         return client
     except ImportError:
         print("[bot] py-clob-client not installed — dry-run mode")
